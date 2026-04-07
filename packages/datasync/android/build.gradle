@@ -1,0 +1,75 @@
+// This is the Gradle build file for the DataSync Expo module.
+// It includes Room, SQLCipher, Google Nearby Connections, WorkManager, and coroutines.
+
+apply plugin: 'com.android.library'
+apply plugin: 'kotlin-android'
+apply plugin: 'com.google.devtools.ksp'
+apply plugin: 'kotlinx-serialization'
+
+group = 'expo.modules.datasync'
+
+def expoModulesCorePlugin = new File(project(":expo-modules-core").projectDir.absolutePath, "ExpoModulesCorePlugin.gradle")
+if (expoModulesCorePlugin.exists()) {
+  apply from: expoModulesCorePlugin
+  applyKotlinExpoModulesCorePlugin()
+}
+
+android {
+  namespace "expo.modules.datasync"
+  compileSdkVersion safeExtGet("compileSdkVersion", 35)
+  defaultConfig {
+    minSdkVersion safeExtGet("minSdkVersion", 24)
+    targetSdkVersion safeExtGet("targetSdkVersion", 35)
+  }
+
+  compileOptions {
+    sourceCompatibility JavaVersion.VERSION_17
+    targetCompatibility JavaVersion.VERSION_17
+  }
+
+  kotlinOptions {
+    jvmTarget = "17"
+  }
+
+  buildFeatures {
+    buildConfig true
+  }
+}
+
+dependencies {
+  implementation project(':expo-modules-core')
+
+  // Room Database
+  def room_version = "2.7.1"
+  implementation "androidx.room:room-runtime:$room_version"
+  implementation "androidx.room:room-ktx:$room_version"
+  ksp "androidx.room:room-compiler:$room_version"
+
+  // SQLCipher for encrypted database
+  implementation "net.zetetic:android-database-sqlcipher:4.5.4"
+  implementation "androidx.sqlite:sqlite:2.4.0"
+
+  // Android Keystore for key management
+  implementation "androidx.security:security-crypto:1.1.0-alpha06"
+
+  // Google Nearby Connections
+  implementation "com.google.android.gms:play-services-nearby:19.3.0"
+
+  // WorkManager
+  def work_version = "2.10.0"
+  implementation "androidx.work:work-runtime-ktx:$work_version"
+
+  // Kotlin coroutines
+  implementation "org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1"
+  implementation "org.jetbrains.kotlinx:kotlinx-coroutines-core:1.8.1"
+
+  // Kotlin serialization
+  implementation "org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3"
+
+  // AndroidX Core
+  implementation "androidx.core:core-ktx:1.13.1"
+}
+
+def safeExtGet(prop, fallback) {
+  rootProject.ext.has(prop) ? rootProject.ext.get(prop) : fallback
+}

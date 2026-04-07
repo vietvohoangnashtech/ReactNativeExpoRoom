@@ -1,0 +1,33 @@
+{
+  "name": "xpw2-monorepo",
+  "version": "0.0.1",
+  "private": true,
+  "description": "XPW2 — Offline-first event-driven body management app",
+  "scripts": {
+    "dev": "pnpm --filter mobile expo start",
+    "android": "pnpm --filter mobile expo run:android",
+    "build": "turbo run build",
+    "test": "turbo run test",
+    "lint": "turbo run lint",
+    "clean": "turbo run clean",
+    "storybook": "pnpm --filter @xpw2/ui storybook"
+  },
+  "devDependencies": {
+    "turbo": "^2.5.0",
+    "prettier": "^3.5.0",
+    "typescript": "~5.8.3"
+  },
+  "resolutions": {
+    "react": "19.2.0",
+    "react-native": "0.83.4"
+  },
+  "packageManager": "pnpm@10.20.0",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "dependencies": {
+    "expo": "~55.0.11",
+    "react": "19.2.0",
+    "react-native": "0.83.4"
+  }
+}

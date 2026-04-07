@@ -1,0 +1,23 @@
+{
+  "name": "@xpw2/datasync",
+  "version": "0.0.1",
+  "private": true,
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "scripts": {
+    "build": "tsc",
+    "clean": "rm -rf build",
+    "test": "jest",
+    "lint": "tsc --noEmit"
+  },
+  "peerDependencies": {
+    "expo": ">=55.0.0",
+    "react": ">=19.0.0",
+    "react-native": ">=0.83.0"
+  },
+  "devDependencies": {
+    "expo": "~55.0.11",
+    "expo-modules-core": "~2.3.0",
+    "typescript": "~5.8.3"
+  }
+}

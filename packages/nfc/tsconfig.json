@@ -1,0 +1,7 @@
+{
+  "extends": "@xpw2/tsconfig/react-native.json",
+  "compilerOptions": {
+    "outDir": "dist"
+  },
+  "include": ["src"]
+}
