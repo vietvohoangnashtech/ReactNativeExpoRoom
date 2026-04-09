@@ -2,23 +2,17 @@ import React from 'react';
 import { Tabs } from 'expo-router';
 import { Text } from 'react-native';
 
-export default function TabLayout() {
+export default function FeaturesLayout() {
   return (
     <Tabs
       screenOptions={{
-        headerShown: true,
+        headerShown: false,
         tabBarActiveTintColor: '#007AFF',
+        tabBarInactiveTintColor: '#999',
       }}
     >
       <Tabs.Screen
         name="index"
-        options={{
-          title: 'Session',
-          tabBarIcon: ({ color }) => <Text style={{ color, fontSize: 20 }}>📋</Text>,
-        }}
-      />
-      <Tabs.Screen
-        name="members"
         options={{
           title: 'Members',
           tabBarIcon: ({ color }) => <Text style={{ color, fontSize: 20 }}>👤</Text>,
@@ -43,6 +37,13 @@ export default function TabLayout() {
         options={{
           title: 'Todos',
           tabBarIcon: ({ color }) => <Text style={{ color, fontSize: 20 }}>✅</Text>,
+        }}
+      />
+      <Tabs.Screen
+        name="more"
+        options={{
+          title: 'More',
+          tabBarIcon: ({ color }) => <Text style={{ color, fontSize: 20 }}>⋯</Text>,
         }}
       />
     </Tabs>

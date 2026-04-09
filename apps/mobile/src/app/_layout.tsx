@@ -26,10 +26,11 @@ function RootNavigator() {
   return (
     <Stack screenOptions={{ headerShown: false }}>
       {isAuthenticated ? (
-        <Stack.Screen name="(tabs)" />
+        <Stack.Screen name="session-select" />
       ) : (
         <Stack.Screen name="login" />
       )}
+      <Stack.Screen name="(features)" />
     </Stack>
   );
 }

@@ -86,7 +86,7 @@ Feature-first architecture in `apps/mobile/src/`:
 
 ```
 src/
-  app/             # expo-router routes ((tabs)/index, devices, members, todos, weigh, login)
+  app/             # expo-router routes (login, session-select, (features)/ tabs)
   features/        # Feature modules (auth/, session/, member/, devices/, sync/, todo/, weigh/)
     <feature>/
       screens/     # Screen components

@@ -11,35 +11,49 @@ import {
   loadDiscoveredDevicesThunk,
 } from '../store/devicesSlice';
 import * as DataSync from '@xpw2/datasync';
+import FeatureLayout from '@/components/FeatureLayout';
 
 export default function DevicesScreen() {
   const dispatch = useAppDispatch();
   const { discoveredDevices, syncInfo, isScanning } = useAppSelector((s) => s.devices);
 
   useEffect(() => {
+    console.log('[Nearby] Loading devices and sync info...');
     dispatch(loadDevicesThunk());
     dispatch(loadSyncInfoThunk());
 
     const sub = DataSync.addDeviceFoundListener((event) => {
+      console.log('[Nearby] Device found event:', event);
       dispatch(loadDiscoveredDevicesThunk());
     });
 
     return () => sub.remove();
   }, [dispatch]);
 
+  useEffect(() => {
+    console.log('[Nearby] Sync info updated:', {
+      advertising: syncInfo?.isAdvertising,
+      discovering: syncInfo?.isDiscovering,
+      connected: syncInfo?.connectedDeviceName ?? 'none',
+    });
+  }, [syncInfo]);
+
   const handleStartScan = useCallback(async () => {
+    console.log('[Nearby] Starting scan...');
     const name = await DataSync.getDeviceName();
     dispatch(startAdvertisingThunk(name));
     dispatch(startDiscoveryThunk());
   }, [dispatch]);
 
   const handleStopScan = useCallback(() => {
+    console.log('[Nearby] Stopping scan');
     dispatch(stopDiscoveryThunk());
     DataSync.stopAdvertising();
   }, [dispatch]);
 
   const handleConnect = useCallback(
     async (endpointId: string) => {
+      console.log('[Nearby] Connecting to endpoint:', endpointId);
       const name = await DataSync.getDeviceName();
       dispatch(connectToDeviceThunk({ deviceName: name, endpointId }));
     },
@@ -47,8 +61,15 @@ export default function DevicesScreen() {
   );
 
   return (
-    <View style={styles.container}>
-      <Text style={styles.header}>Devices</Text>
+    <FeatureLayout title="Devices">
+      {/* Connection Status Badge */}
+      <View style={[styles.connectionBadge, syncInfo?.connectedDeviceName ? styles.badgeConnected : styles.badgeDisconnected]}>
+        <Text style={[styles.badgeText, syncInfo?.connectedDeviceName ? styles.badgeTextConnected : styles.badgeTextDisconnected]}>
+          {syncInfo?.connectedDeviceName
+            ? `Nearby: Connected to ${syncInfo.connectedDeviceName}`
+            : 'Nearby: Not connected'}
+        </Text>
+      </View>
 
       <View style={styles.statusRow}>
         <Text style={styles.statusLabel}>Advertising:</Text>
@@ -56,12 +77,6 @@ export default function DevicesScreen() {
         <Text style={styles.statusLabel}>Discovering:</Text>
         <Text style={styles.statusValue}>{syncInfo?.isDiscovering ? 'Yes' : 'No'}</Text>
       </View>
-
-      {syncInfo?.connectedDeviceName ? (
-        <View style={styles.connectedBox}>
-          <Text style={styles.connectedText}>Connected: {syncInfo.connectedDeviceName}</Text>
-        </View>
-      ) : null}
 
       <View style={styles.buttonRow}>
         {isScanning ? (
@@ -94,20 +109,33 @@ export default function DevicesScreen() {
           <Text style={styles.empty}>{isScanning ? 'Scanning...' : 'No devices found'}</Text>
         }
       />
-    </View>
+    </FeatureLayout>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    padding: 16,
-    backgroundColor: '#f5f5f5',
+  connectionBadge: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 16,
+    alignSelf: 'flex-start',
+    marginBottom: 12,
   },
-  header: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    marginBottom: 16,
+  badgeConnected: {
+    backgroundColor: '#d4edda',
+  },
+  badgeDisconnected: {
+    backgroundColor: '#f8d7da',
+  },
+  badgeText: {
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  badgeTextConnected: {
+    color: '#155724',
+  },
+  badgeTextDisconnected: {
+    color: '#721c24',
   },
   statusRow: {
     flexDirection: 'row',
@@ -120,16 +148,6 @@ const styles = StyleSheet.create({
   statusValue: {
     fontWeight: '600',
     marginRight: 12,
-  },
-  connectedBox: {
-    backgroundColor: '#d4edda',
-    padding: 12,
-    borderRadius: 8,
-    marginBottom: 12,
-  },
-  connectedText: {
-    color: '#155724',
-    fontWeight: '600',
   },
   buttonRow: {
     marginBottom: 16,

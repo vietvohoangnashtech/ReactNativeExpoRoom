@@ -31,44 +31,57 @@ Open the app and sign in. For local development use:
 
 Your session token is stored securely in Android Keystore via `expo-secure-store` and restored automatically on app restart.
 
-### Tab 1 — Session (Home)
+### Session Select
+
+After login you land on the **Session Select** screen.
 
 | Action | How |
 |---|---|
-| Start a session | Tap **Start Session** — creates a `SessionStarted` event |
-| View active session | Session ID, group, member count and event count shown live |
-| View sync status | Colour-coded card showing Pending / DeviceSynced / BackendSynced counts |
-| Trigger manual sync | Tap **Trigger Sync Now** — pushes pending events to other tablets and backend |
-| End a session | Tap **End Session** — records a `SessionEnded` event |
+| Pick a group | Tap one of the group buttons (e.g. Tupton, Mansfield) |
+| Pick a session | Select a session from the list shown for that group |
+| Enter session | Tap **Enter Session** — starts the session and navigates to the feature tabs |
+| Sign out | Tap **Sign Out** at the bottom |
 
-### Tab 2 — Members
+### Tab 1 — Members (Home)
 
 | Action | How |
 |---|---|
-| Switch modes | Toggle between **Identify** and **Register** tabs at the top |
+| Switch modes | Toggle between **Identify** and **Register** segments |
 | Scan NFC card | In Identify mode — tap **Scan NFC Card** and hold card to back of tablet |
+| View raw NFC JSON | Collapsible card shows raw scan result JSON for dev testing |
 | Register member | In Register mode — fill form + optionally scan an NFC card to link |
-| Clear identified member | Tap **✕ Clear** to reset the identified member card |
 
-### Tab 3 — Weigh
+### Tab 2 — Weigh
 
 | Action | How |
 |---|---|
+| Connection status | Badge at top shows "Scale: Connected / Not connected" |
 | Connect BLE scale | Tap **Scan for Scales** → select a discovered scale |
 | Record weight | Step on scale → tap **Save Scale Reading** when stable |
 | Manual entry | Enter weight in kg field and tap **Save** |
 
-### Tab 4 — Devices
+### Tab 3 — Devices
 
 | Action | How |
 |---|---|
+| Connection status | Badge at top shows "Nearby: Connected / Not connected" |
 | Start discovery | Tap **Scan for Devices** |
 | Connect | Tap a discovered device from the list |
-| View sync info | Shows last sync time and event counts per device |
+| View sync info | Shows advertising / discovering status |
 
-### Tab 5 — Todos
+### Tab 4 — Todos
 
 Todos are a shared task list that syncs across all connected tablets. Useful for testing the cross-tablet sync pipeline end-to-end.
+
+### Tab 5 — More
+
+| Action | How |
+|---|---|
+| View sync status | Card showing Pending / DeviceSynced / BackendSynced / Failed counts |
+| Trigger manual sync | Tap **Trigger Sync** |
+| Go to Support | Tap **Support** (placeholder) |
+| Manage Todos | Tap **Todos** — inline todo list |
+| End session | Tap **End Session** — returns to Session Select |
 
 ### Understanding Sync Status
 
@@ -140,24 +153,27 @@ ReactNativeExpoRoom/
 ```
 apps/mobile/src/
 ├── app/                    # expo-router routes
-│   ├── (tabs)/
-│   │   ├── index.tsx       # Session home
-│   │   ├── members.tsx     # Member identify / register
-│   │   ├── devices.tsx     # Cross-tablet devices
-│   │   ├── todos.tsx       # Sync test todos
-│   │   └── weigh.tsx       # Weight measurement
-│   └── login.tsx           # Auth entry point
+│   ├── _layout.tsx         # Root Stack (auth guard → session-select or features)
+│   ├── login.tsx           # Auth entry point
+│   ├── session-select.tsx  # Group/session picker
+│   └── (features)/         # Bottom tab navigator
+│       ├── _layout.tsx     # Tabs layout (Members, Weigh, Devices, Todos, More)
+│       ├── index.tsx       # Members (home tab)
+│       ├── weigh.tsx       # Weight measurement
+│       ├── devices.tsx     # Cross-tablet devices
+│       ├── todos.tsx       # Sync test todos
+│       └── more.tsx        # Overflow menu (sync, end session)
 │
 ├── features/               # 7 feature modules
 │   ├── auth/               # JWT login, token management
-│   ├── session/            # Group session lifecycle
-│   ├── member/             # NFC identification, registration
+│   ├── session/            # Group session lifecycle, MoreScreen
+│   ├── member/             # NFC identification, registration, MembersScreen
 │   ├── devices/            # Cross-tablet sync
 │   ├── sync/               # Outbox status
 │   ├── todo/               # CRUD + sync testing
 │   └── weigh/              # Weight recording
 │
-├── components/             # Shared UI
+├── components/             # Shared UI (FeatureLayout, SyncStatusBar, SessionInfoHeader)
 ├── hooks/                  # useStore, use-theme
 ├── constants/              # Colors, Fonts, Spacing
 └── store/                  # Redux store setup

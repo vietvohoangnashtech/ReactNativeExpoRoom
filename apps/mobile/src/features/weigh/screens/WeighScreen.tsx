@@ -1,8 +1,9 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, TextInput } from 'react-native';
 import { useScaleWeight } from '@xpw2/ble-scale';
 import * as DataSync from '@xpw2/datasync';
 import { useAppSelector } from '../../../hooks/useStore';
+import FeatureLayout from '@/components/FeatureLayout';
 
 export default function WeighScreen() {
   const activeSession = useAppSelector((s) => s.session.activeSession);
@@ -22,10 +23,28 @@ export default function WeighScreen() {
   const [manualWeight, setManualWeight] = useState('');
   const [saved, setSaved] = useState(false);
 
+  // BLE connection status logging
+  useEffect(() => {
+    console.log('[BLE] Connection status changed:', { isConnected, device: connectedDevice?.name ?? 'none' });
+  }, [isConnected, connectedDevice]);
+
+  useEffect(() => {
+    if (lastReading) {
+      console.log('[BLE] Scale reading:', { weight: lastReading.weight, unit: lastReading.unit, stable: lastReading.stable });
+    }
+  }, [lastReading]);
+
+  useEffect(() => {
+    if (discoveredScales.length > 0) {
+      console.log('[BLE] Discovered scales:', discoveredScales.map((s) => s.name));
+    }
+  }, [discoveredScales]);
+
   const handleSaveWeight = useCallback(
     async (weight: number, source: 'manual' | 'scale', scaleDeviceId?: string) => {
       if (!selectedMember) return;
       const sessionId = activeSession?.id ?? 'test-session';
+      console.log('[BLE] Saving weight:', { weight, source, memberId: selectedMember.id });
       await DataSync.recordEvent(
         'WeightRecorded',
         {
@@ -55,100 +74,110 @@ export default function WeighScreen() {
     handleSaveWeight(lastReading.weight, 'scale', lastReading.deviceId);
   }, [lastReading, handleSaveWeight]);
 
-  if (!activeSession) {
-    return (
-      <View style={styles.container}>
-        <Text style={styles.header}>Weigh</Text>
-        <View style={styles.noSession}>
-          <Text style={styles.noSessionText}>No active session.</Text>
-          <Text style={styles.noSessionHint}>Go to the Session tab to start one.</Text>
-        </View>
-      </View>
-    );
-  }
+  const handleStartScan = useCallback(() => {
+    console.log('[BLE] Starting scale scan...');
+    startScan();
+  }, [startScan]);
+
+  const handleStopScan = useCallback(() => {
+    console.log('[BLE] Stopping scale scan');
+    stopScan();
+  }, [stopScan]);
 
   return (
-    <View style={styles.container}>
-      <Text style={styles.header}>Weigh</Text>
+    <FeatureLayout title="Weigh">
+      <View style={styles.content}>
+        {/* Connection Status Badge */}
+        <View style={[styles.statusBadge, isConnected ? styles.statusConnected : styles.statusDisconnected]}>
+          <Text style={[styles.statusText, isConnected ? styles.statusTextConnected : styles.statusTextDisconnected]}>
+            {isConnected && connectedDevice
+              ? `Scale: Connected to ${connectedDevice.name}`
+              : 'Scale: Not connected'}
+          </Text>
+        </View>
 
-      {selectedMember ? (
-        <Text style={styles.memberName}>Member: {selectedMember.name}</Text>
-      ) : (
-        <Text style={styles.warning}>No member selected. Identify a member first.</Text>
-      )}
-
-      {/* Scale Reading */}
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>BLE Scale</Text>
-
-        {isConnected && connectedDevice ? (
-          <View style={styles.connectedBox}>
-            <Text style={styles.connectedText}>Connected: {connectedDevice.name}</Text>
-            <TouchableOpacity onPress={disconnect}>
-              <Text style={styles.disconnectText}>Disconnect</Text>
-            </TouchableOpacity>
-          </View>
+        {selectedMember ? (
+          <Text style={styles.memberName}>Member: {selectedMember.name}</Text>
         ) : (
-          <TouchableOpacity
-            style={styles.button}
-            onPress={isScanning ? stopScan : () => startScan()}
-          >
-            <Text style={styles.buttonText}>{isScanning ? 'Stop Scan' : 'Scan for Scales'}</Text>
-          </TouchableOpacity>
+          <Text style={styles.warning}>No member selected. Identify a member first.</Text>
         )}
 
-        {discoveredScales.map((scale) => (
-          <TouchableOpacity
-            key={scale.id}
-            style={styles.scaleItem}
-            onPress={() => connect(scale.id)}
-          >
-            <Text style={styles.scaleName}>{scale.name}</Text>
-            <Text style={styles.scaleRssi}>RSSI: {scale.rssi}</Text>
-          </TouchableOpacity>
-        ))}
+        {/* Scale Reading */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>BLE Scale</Text>
 
-        {lastReading ? (
-          <View style={styles.readingBox}>
-            <Text style={styles.readingWeight}>{lastReading.weight} {lastReading.unit}</Text>
-            <Text style={styles.readingStable}>
-              {lastReading.stable ? 'Stable' : 'Unstable'}
-            </Text>
+          {isConnected && connectedDevice ? (
+            <View style={styles.connectedBox}>
+              <Text style={styles.connectedText}>Connected: {connectedDevice.name}</Text>
+              <TouchableOpacity onPress={disconnect}>
+                <Text style={styles.disconnectText}>Disconnect</Text>
+              </TouchableOpacity>
+            </View>
+          ) : (
+            <TouchableOpacity
+              style={styles.button}
+              onPress={isScanning ? handleStopScan : handleStartScan}
+            >
+              <Text style={styles.buttonText}>{isScanning ? 'Stop Scan' : 'Scan for Scales'}</Text>
+            </TouchableOpacity>
+          )}
+
+          {discoveredScales.map((scale) => (
+            <TouchableOpacity
+              key={scale.id}
+              style={styles.scaleItem}
+              onPress={() => {
+                console.log('[BLE] Connecting to scale:', scale.name);
+                connect(scale.id);
+              }}
+            >
+              <Text style={styles.scaleName}>{scale.name}</Text>
+              <Text style={styles.scaleRssi}>RSSI: {scale.rssi}</Text>
+            </TouchableOpacity>
+          ))}
+
+          {lastReading ? (
+            <View style={styles.readingBox}>
+              <Text style={styles.readingWeight}>{lastReading.weight} {lastReading.unit}</Text>
+              <Text style={styles.readingStable}>
+                {lastReading.stable ? 'Stable' : 'Unstable'}
+              </Text>
+              <TouchableOpacity
+                style={[styles.button, styles.saveButton]}
+                onPress={handleScaleSave}
+                disabled={!selectedMember}
+              >
+                <Text style={styles.buttonText}>Save Scale Reading</Text>
+              </TouchableOpacity>
+            </View>
+          ) : null}
+        </View>
+
+        {/* Manual Entry */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Manual Entry</Text>
+          <View style={styles.manualRow}>
+            <TextInput
+              style={styles.weightInput}
+              placeholder="Weight (kg)"
+              value={manualWeight}
+              onChangeText={setManualWeight}
+              keyboardType="decimal-pad"
+              accessibilityLabel="Manual weight input"
+            />
             <TouchableOpacity
               style={[styles.button, styles.saveButton]}
-              onPress={handleScaleSave}
+              onPress={handleManualSave}
               disabled={!selectedMember}
             >
-              <Text style={styles.buttonText}>Save Scale Reading</Text>
+              <Text style={styles.buttonText}>Save</Text>
             </TouchableOpacity>
           </View>
-        ) : null}
-      </View>
-
-      {/* Manual Entry */}
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Manual Entry</Text>
-        <View style={styles.manualRow}>
-          <TextInput
-            style={styles.weightInput}
-            placeholder="Weight (kg)"
-            value={manualWeight}
-            onChangeText={setManualWeight}
-            keyboardType="decimal-pad"
-            accessibilityLabel="Manual weight input"
-          />
-          <TouchableOpacity
-            style={[styles.button, styles.saveButton]}
-            onPress={handleManualSave}
-            disabled={!selectedMember}
-          >
-            <Text style={styles.buttonText}>Save</Text>
-          </TouchableOpacity>
         </View>
-      </View>
 
-      {saved ? <Text style={styles.savedText}>Weight saved!</Text> : null}
-    </View>
+        {saved ? <Text style={styles.savedText}>Weight saved!</Text> : null}
+      </View>
+    </FeatureLayout>
   );
 }
 
@@ -259,19 +288,30 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
   },
-  noSession: {
+  content: {
     flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    gap: 8,
   },
-  noSessionText: {
-    fontSize: 18,
+  statusBadge: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 16,
+    alignSelf: 'flex-start',
+    marginBottom: 12,
+  },
+  statusConnected: {
+    backgroundColor: '#d4edda',
+  },
+  statusDisconnected: {
+    backgroundColor: '#f8d7da',
+  },
+  statusText: {
+    fontSize: 13,
     fontWeight: '600',
-    color: '#333',
   },
-  noSessionHint: {
-    fontSize: 14,
-    color: '#888',
+  statusTextConnected: {
+    color: '#155724',
+  },
+  statusTextDisconnected: {
+    color: '#721c24',
   },
 });

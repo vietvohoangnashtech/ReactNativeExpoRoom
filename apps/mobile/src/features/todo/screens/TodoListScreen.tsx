@@ -10,14 +10,29 @@ import {
 } from 'react-native';
 import { useAppDispatch, useAppSelector } from '../../../hooks/useStore';
 import { loadTodosThunk, createTodoThunk, updateTodoThunk, deleteTodoThunk } from '../store/todoSlice';
+import FeatureLayout from '@/components/FeatureLayout';
+
+/** Standalone content — used by MoreScreen for inline embedding */
+export function TodoListContent() {
+  return <TodoListInner />;
+}
 
 export default function TodoListScreen() {
+  return (
+    <FeatureLayout title="Todos (Sync Test)">
+      <TodoListInner />
+    </FeatureLayout>
+  );
+}
+
+function TodoListInner() {
   const dispatch = useAppDispatch();
   const { todos, isLoading } = useAppSelector((s) => s.todo);
   const activeSession = useAppSelector((s) => s.session.activeSession);
   const [newTitle, setNewTitle] = useState('');
 
   useEffect(() => {
+    console.log('[Todo] Loading todos...');
     dispatch(loadTodosThunk());
   }, [dispatch]);
 
@@ -25,6 +40,7 @@ export default function TodoListScreen() {
     const title = newTitle.trim();
     if (!title) return;
     const sessionId = activeSession?.id ?? 'test-session';
+    console.log('[Todo] Creating:', title);
     dispatch(createTodoThunk({ title, sessionId })).then(() => {
       dispatch(loadTodosThunk());
     });
@@ -34,6 +50,7 @@ export default function TodoListScreen() {
   const handleToggle = useCallback(
     (todoId: string, completed: boolean) => {
       const sessionId = activeSession?.id ?? 'test-session';
+      console.log('[Todo] Toggling:', todoId, '→', !completed);
       dispatch(updateTodoThunk({ todoId, completed: !completed, sessionId })).then(() => {
         dispatch(loadTodosThunk());
       });
@@ -50,6 +67,7 @@ export default function TodoListScreen() {
           style: 'destructive',
           onPress: () => {
             const sessionId = activeSession?.id ?? 'test-session';
+            console.log('[Todo] Deleting:', todoId);
             dispatch(deleteTodoThunk({ todoId, sessionId })).then(() => {
               dispatch(loadTodosThunk());
             });
@@ -80,22 +98,8 @@ export default function TodoListScreen() {
     [handleToggle, handleDelete]
   );
 
-  if (!activeSession) {
-    return (
-      <View style={styles.container}>
-        <Text style={styles.header}>Todos (Sync Test)</Text>
-        <View style={styles.noSession}>
-          <Text style={styles.noSessionText}>No active session.</Text>
-          <Text style={styles.noSessionHint}>Go to the Session tab to start one.</Text>
-        </View>
-      </View>
-    );
-  }
-
   return (
-    <View style={styles.container}>
-      <Text style={styles.header}>Todos (Sync Test)</Text>
-
+    <View style={styles.content}>
       <View style={styles.inputRow}>
         <TextInput
           style={styles.input}
@@ -124,15 +128,8 @@ export default function TodoListScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: {
+  content: {
     flex: 1,
-    padding: 16,
-    backgroundColor: '#f5f5f5',
-  },
-  header: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    marginBottom: 16,
   },
   inputRow: {
     flexDirection: 'row',
@@ -191,20 +188,5 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     color: '#999',
     marginTop: 32,
-  },
-  noSession: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    gap: 8,
-  },
-  noSessionText: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#333',
-  },
-  noSessionHint: {
-    fontSize: 14,
-    color: '#888',
   },
 });

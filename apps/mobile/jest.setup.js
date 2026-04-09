@@ -130,6 +130,13 @@ jest.mock('@xpw2/ble-scale', () => ({
     weight: null,
     status: 'idle',
     error: null,
+    isScanning: false,
+    isConnected: false,
+    discoveredScales: [],
+    connectedDevice: null,
+    lastReading: null,
+    startScan: jest.fn(),
+    stopScan: jest.fn(),
     connect: jest.fn(),
     disconnect: jest.fn(),
   }),
@@ -154,6 +161,33 @@ jest.mock('expo-secure-store', () => ({
 
 beforeEach(() => {
   mockSecureStoreMemory.clear();
+});
+
+// ─── expo-router ──────────────────────────────────────────────────────────────
+const mockRouter = {
+  push: jest.fn(),
+  replace: jest.fn(),
+  back: jest.fn(),
+  canGoBack: jest.fn().mockReturnValue(false),
+  setParams: jest.fn(),
+};
+
+jest.mock('expo-router', () => ({
+  useRouter: jest.fn(() => mockRouter),
+  useLocalSearchParams: jest.fn(() => ({})),
+  useSegments: jest.fn(() => []),
+  Stack: {
+    Screen: jest.fn(() => null),
+  },
+  Tabs: jest.fn(({ children }) => children ?? null),
+  Redirect: jest.fn(() => null),
+  Link: jest.fn(({ children }) => children ?? null),
+}));
+
+beforeEach(() => {
+  mockRouter.push.mockClear();
+  mockRouter.replace.mockClear();
+  mockRouter.back.mockClear();
 });
 
 // ─── uuid — deterministic IDs ─────────────────────────────────────────────────
