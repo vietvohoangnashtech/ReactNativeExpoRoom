@@ -10,6 +10,7 @@ import type {
 
 interface DevicesState {
   devices: DeviceRecord[];
+  pairedDevices: DeviceRecord[];
   discoveredDevices: DiscoveredDevice[];
   connectedDevices: ConnectedDevice[];
   syncInfo: DeviceSyncInfo | null;
@@ -23,6 +24,7 @@ interface DevicesState {
 
 const initialState: DevicesState = {
   devices: [],
+  pairedDevices: [],
   discoveredDevices: [],
   connectedDevices: [],
   syncInfo: null,
@@ -51,6 +53,10 @@ export const startDiscoveryThunk = createAsyncThunk('devices/startDiscovery', as
 
 export const stopDiscoveryThunk = createAsyncThunk('devices/stopDiscovery', async () => {
   await DataSync.stopDiscovery();
+});
+
+export const stopAdvertisingThunk = createAsyncThunk('devices/stopAdvertising', async () => {
+  await DataSync.stopAdvertising();
 });
 
 export const connectToDeviceThunk = createAsyncThunk(
@@ -97,6 +103,18 @@ export const startOutboxThunk = createAsyncThunk('devices/startOutbox', async ()
 export const loadSyncStatusThunk = createAsyncThunk('devices/loadSyncStatus', async () => {
   return DataSync.getSyncStatus();
 });
+
+export const loadPairedDevicesThunk = createAsyncThunk('devices/loadPaired', async () => {
+  return DataSync.getPairedDevices();
+});
+
+export const removePairedDeviceThunk = createAsyncThunk(
+  'devices/removePaired',
+  async (deviceId: string) => {
+    await DataSync.removePairedDevice(deviceId);
+    return deviceId;
+  },
+);
 
 const devicesSlice = createSlice({
   name: 'devices',
@@ -209,9 +227,16 @@ const devicesSlice = createSlice({
       .addCase(stopDiscoveryThunk.fulfilled, (state) => {
         state.isScanning = false;
         if (state.syncInfo) {
-          state.syncInfo.isAdvertising = false;
           state.syncInfo.isDiscovering = false;
         }
+      })
+      .addCase(stopAdvertisingThunk.fulfilled, (state) => {
+        if (state.syncInfo) {
+          state.syncInfo.isAdvertising = false;
+        }
+      })
+      .addCase(stopAdvertisingThunk.rejected, (state, action) => {
+        state.error = action.error.message ?? 'Failed to stop advertising';
       })
       .addCase(loadSyncInfoThunk.fulfilled, (state, action) => {
         state.syncInfo = action.payload;
@@ -236,6 +261,12 @@ const devicesSlice = createSlice({
       })
       .addCase(loadSyncStatusThunk.fulfilled, (state, action) => {
         state.syncStatus = action.payload;
+      })
+      .addCase(loadPairedDevicesThunk.fulfilled, (state, action) => {
+        state.pairedDevices = action.payload;
+      })
+      .addCase(removePairedDeviceThunk.fulfilled, (state, action) => {
+        state.pairedDevices = state.pairedDevices.filter((d) => d.id !== action.payload);
       });
   },
 });

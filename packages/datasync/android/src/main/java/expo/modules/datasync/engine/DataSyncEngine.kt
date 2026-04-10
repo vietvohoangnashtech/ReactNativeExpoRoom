@@ -349,6 +349,7 @@ class DataSyncEngine(private val context: Context) {
     // Devices
     suspend fun getDevice(id: String): DeviceEntity? = withContext(Dispatchers.IO) { db.deviceDao().getById(id) }
     suspend fun getDeviceByEndpoint(endpointId: String): DeviceEntity? = withContext(Dispatchers.IO) { db.deviceDao().getByEndpointId(endpointId) }
+    suspend fun getPairedDeviceByName(name: String): DeviceEntity? = withContext(Dispatchers.IO) { db.deviceDao().getPairedByName(name) }
     suspend fun getPairedDevices(): List<DeviceEntity> = withContext(Dispatchers.IO) { db.deviceDao().getPairedDevices() }
     suspend fun getAllDevices(): List<DeviceEntity> = withContext(Dispatchers.IO) { db.deviceDao().getAll() }
     fun observeDevices(): Flow<List<DeviceEntity>> = db.deviceDao().observeAll()
@@ -356,6 +357,7 @@ class DataSyncEngine(private val context: Context) {
     // Device management (direct writes — not event-sourced)
     suspend fun upsertDevice(device: DeviceEntity) = withContext(Dispatchers.IO) { db.deviceDao().insert(device) }
     suspend fun updateDeviceStatus(id: String, status: String) = withContext(Dispatchers.IO) { db.deviceDao().updateConnectionStatus(id, status) }
+    suspend fun deleteDevice(id: String) = withContext(Dispatchers.IO) { db.deviceDao().deleteById(id) }
 
     // ─── Outbox Observable ──────────────────────────────────────────────
 

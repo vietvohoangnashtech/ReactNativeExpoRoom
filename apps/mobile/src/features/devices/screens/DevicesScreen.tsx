@@ -16,7 +16,10 @@ import {
 import { useAppDispatch, useAppSelector } from '../../../hooks/useStore';
 import {
   loadDevicesThunk,
+  loadPairedDevicesThunk,
+  removePairedDeviceThunk,
   startAdvertisingThunk,
+  stopAdvertisingThunk,
   startDiscoveryThunk,
   stopDiscoveryThunk,
   connectToDeviceThunk,
@@ -51,6 +54,7 @@ async function requestNearbyPermissions(): Promise<boolean> {
 export default function DevicesScreen() {
   const dispatch = useAppDispatch();
   const {
+    pairedDevices,
     discoveredDevices,
     connectedDevices,
     syncInfo,
@@ -65,6 +69,11 @@ export default function DevicesScreen() {
   const appStateRef = useRef<AppStateStatus>(AppState.currentState);
   const [logs, setLogs] = useState<string[]>([]);
   const [autoSync, setAutoSync] = useState(true);
+  const [showDebugLog, setShowDebugLog] = useState(false);
+  const [advertisingEnabled, setAdvertisingEnabled] = useState(false);
+  const [deviceName, setDeviceName] = useState<string>('');
+  const autoReconnectRef = useRef<Set<string>>(new Set());
+  const advertisingEnabledRef = useRef(false);
 
   const addLog = useCallback((msg: string) => {
     const time = new Date().toLocaleTimeString('en-US', {
@@ -79,10 +88,15 @@ export default function DevicesScreen() {
   // ─── Bootstrap: load state + subscribe to events ──────────────
   useEffect(() => {
     dispatch(loadDevicesThunk());
+    dispatch(loadPairedDevicesThunk());
     dispatch(loadSyncInfoThunk());
     dispatch(loadSyncStatusThunk());
     dispatch(loadConnectedDevicesThunk());
     dispatch(loadDiscoveredDevicesThunk());
+
+    DataSync.getDeviceName()
+      .then(setDeviceName)
+      .catch(() => {});
 
     addLog('Screen mounted — loading state…');
 
@@ -105,10 +119,23 @@ export default function DevicesScreen() {
         }),
       );
       dispatch(loadSyncInfoThunk());
+      dispatch(loadPairedDevicesThunk());
       if (event.connected) {
-        // Auto-start outbox processing when a device connects
         dispatch(startOutboxThunk());
-        addLog('⚙️ Started outbox processing');
+        // Stop both once connected — saves battery
+        dispatch(stopDiscoveryThunk());
+        dispatch(stopAdvertisingThunk());
+        addLog('⚙️ Outbox started · ⏹ Advertising & Discovery stopped');
+      } else {
+        // On disconnect: auto-resume advertising if toggle was ON
+        if (advertisingEnabledRef.current) {
+          DataSync.getDeviceName()
+            .then((name) => {
+              dispatch(startAdvertisingThunk(name));
+              addLog('📡 Advertising auto-resumed after disconnect');
+            })
+            .catch(() => {});
+        }
       }
     });
 
@@ -126,6 +153,7 @@ export default function DevicesScreen() {
         dispatch(loadSyncInfoThunk());
         dispatch(loadConnectedDevicesThunk());
         dispatch(loadDiscoveredDevicesThunk());
+        dispatch(loadPairedDevicesThunk());
       }
       appStateRef.current = nextState;
     });
@@ -138,6 +166,47 @@ export default function DevicesScreen() {
       appStateSub.remove();
     };
   }, [dispatch, addLog]);
+
+  // ─── Auto-reconnect: when paired device is discovered, connect ─
+  useEffect(() => {
+    if (pairedDevices.length === 0 || discoveredDevices.length === 0) return;
+
+    for (const discovered of discoveredDevices) {
+      const isPaired = pairedDevices.some(
+        (p) => p.deviceName === discovered.endpointName && p.isPaired,
+      );
+      const isAlreadyConnected = connectedDevices.some(
+        (c) => c.endpointId === discovered.endpointId,
+      );
+      const isAttempting = autoReconnectRef.current.has(discovered.endpointId);
+
+      if (isPaired && !isAlreadyConnected && !isAttempting && !isConnecting) {
+        autoReconnectRef.current.add(discovered.endpointId);
+        addLog(`🔁 Auto-reconnecting to ${discovered.endpointName}…`);
+        DataSync.getDeviceName().then((name) => {
+          dispatch(
+            connectToDeviceThunk({
+              deviceName: name,
+              endpointId: discovered.endpointId,
+            }),
+          ).finally(() => {
+            autoReconnectRef.current.delete(discovered.endpointId);
+          });
+        });
+      }
+    }
+  }, [pairedDevices, discoveredDevices, connectedDevices, isConnecting, dispatch, addLog]);
+
+  // ─── Auto-start advertising if paired devices exist ─────────
+  const hasStartedAutoScan = useRef(false);
+  useEffect(() => {
+    if (hasStartedAutoScan.current) return;
+    if (pairedDevices.length > 0 && connectedDevices.length === 0 && !syncInfo?.isAdvertising) {
+      hasStartedAutoScan.current = true;
+      addLog('🔁 Paired devices found — auto-starting advertising…');
+      handleStartAdvertising();
+    }
+  }, [pairedDevices, connectedDevices.length, syncInfo?.isAdvertising]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ─── Auto-sync: trigger sync immediately on new local events ──
   useEffect(() => {
@@ -160,9 +229,48 @@ export default function DevicesScreen() {
 
   // ─── Handlers ─────────────────────────────────────────────────
 
-  const handleStartScan = useCallback(async () => {
+  const handleStartAdvertising = useCallback(async () => {
     dispatch(clearError());
-    addLog('Requesting Nearby permissions…');
+    const granted = await requestNearbyPermissions();
+    if (!granted) {
+      addLog('⚠️ Permissions denied');
+      Alert.alert(
+        'Permissions Required',
+        'Bluetooth and Nearby permissions are required for advertising.\n\nGo to Settings → Permissions and grant all required permissions.',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Open Settings', onPress: () => Linking.openSettings() },
+        ],
+      );
+      return;
+    }
+    try {
+      const name = deviceName || (await DataSync.getDeviceName());
+      if (!deviceName) setDeviceName(name);
+      addLog(`Starting advertising as "${name}"…`);
+      const result = await dispatch(startAdvertisingThunk(name));
+      if (startAdvertisingThunk.rejected.match(result)) {
+        addLog(`❌ Advertising failed: ${result.error.message}`);
+      } else {
+        setAdvertisingEnabled(true);
+        advertisingEnabledRef.current = true;
+        addLog('📡 Advertising started');
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      addLog(`❌ Error: ${msg}`);
+    }
+  }, [dispatch, addLog, deviceName]);
+
+  const handleStopAdvertising = useCallback(() => {
+    dispatch(stopAdvertisingThunk());
+    setAdvertisingEnabled(false);
+    advertisingEnabledRef.current = false;
+    addLog('📡 Advertising stopped');
+  }, [dispatch, addLog]);
+
+  const handleStartDiscovery = useCallback(async () => {
+    dispatch(clearError());
     const granted = await requestNearbyPermissions();
     if (!granted) {
       addLog('⚠️ Permissions denied');
@@ -176,53 +284,32 @@ export default function DevicesScreen() {
       );
       return;
     }
-    addLog('✅ Permissions granted');
     try {
-      const name = await DataSync.getDeviceName();
-      addLog(`Starting advertising as "${name}"…`);
-      const advResult = await dispatch(startAdvertisingThunk(name));
-      if (startAdvertisingThunk.rejected.match(advResult)) {
-        addLog(`❌ Advertising failed: ${advResult.error.message}`);
-      } else {
-        addLog('📡 Advertising started');
-      }
       addLog('Starting discovery…');
-      const discResult = await dispatch(startDiscoveryThunk());
-      if (startDiscoveryThunk.rejected.match(discResult)) {
-        addLog(`❌ Discovery failed: ${discResult.error.message}`);
+      const result = await dispatch(startDiscoveryThunk());
+      if (startDiscoveryThunk.rejected.match(result)) {
+        addLog(`❌ Discovery failed: ${result.error.message}`);
       } else {
         addLog('🔍 Discovery started');
       }
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       addLog(`❌ Error: ${msg}`);
-      console.error('[Devices] Failed to start scan:', e);
     }
   }, [dispatch, addLog]);
 
-  const handleStopScan = useCallback(() => {
+  const handleStopDiscovery = useCallback(() => {
     dispatch(stopDiscoveryThunk());
-    DataSync.stopAdvertising();
-  }, [dispatch]);
+    addLog('🔍 Discovery stopped');
+  }, [dispatch, addLog]);
 
   const handleConnect = useCallback(
     async (endpointId: string, endpointName: string) => {
-      Alert.alert(
-        'Connect to Device',
-        `Connect to "${endpointName}"?\n\nBoth devices must have this app open for sync to work.`,
-        [
-          { text: 'Cancel', style: 'cancel' },
-          {
-            text: 'Connect',
-            onPress: async () => {
-              const name = await DataSync.getDeviceName();
-              dispatch(connectToDeviceThunk({ deviceName: name, endpointId }));
-            },
-          },
-        ],
-      );
+      addLog(`Connecting to ${endpointName}…`);
+      const name = await DataSync.getDeviceName();
+      dispatch(connectToDeviceThunk({ deviceName: name, endpointId }));
     },
-    [dispatch],
+    [dispatch, addLog],
   );
 
   const handleDisconnect = useCallback(
@@ -265,9 +352,42 @@ export default function DevicesScreen() {
     ]);
   }, [dispatch, connectedDevices.length]);
 
-  // ─── Render ───────────────────────────────────────────────────
+  const handleRemovePaired = useCallback(
+    (deviceId: string, deviceName: string) => {
+      Alert.alert('Remove Paired Device', `Remove "${deviceName}" from paired devices?`, [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Remove',
+          style: 'destructive',
+          onPress: () => {
+            dispatch(removePairedDeviceThunk(deviceId));
+            addLog(`🗑 Removed paired device: ${deviceName}`);
+          },
+        },
+      ]);
+    },
+    [dispatch, addLog],
+  );
+
+  // ─── Render helpers ────────────────────────────────────────────
 
   const hasConnections = connectedDevices.length > 0;
+
+  const getPairedDeviceStatus = useCallback(
+    (device: DataSync.DeviceRecord) => {
+      const connected = connectedDevices.some((c) => c.endpointName === device.deviceName);
+      if (connected) return 'connected';
+      const discovering = discoveredDevices.some((d) => d.endpointName === device.deviceName);
+      if (discovering) return 'nearby';
+      return 'offline';
+    },
+    [connectedDevices, discoveredDevices],
+  );
+
+  // Filter discovered devices that are NOT already paired (avoid duplicates)
+  const unpairedDiscovered = discoveredDevices.filter(
+    (d) => !pairedDevices.some((p) => p.deviceName === d.endpointName),
+  );
 
   return (
     <View style={styles.container}>
@@ -295,6 +415,11 @@ export default function DevicesScreen() {
             {syncInfo?.isDiscovering ? '🔍 Discovering' : '🔍 Off'}
           </Text>
         </View>
+        {hasConnections ? (
+          <View style={[styles.statusBadge, styles.badgeConnected]}>
+            <Text style={styles.badgeText}>🟢 {connectedDevices.length} Connected</Text>
+          </View>
+        ) : null}
       </View>
 
       {error ? (
@@ -306,31 +431,133 @@ export default function DevicesScreen() {
         </View>
       ) : null}
 
-      {/* ── Connected devices ── */}
+      {/* ── Advertising (Visibility) ── */}
+      <View style={[styles.section, syncInfo?.isAdvertising && styles.sectionActive]}>
+        <Text style={styles.sectionTitle}>📡 Advertising (Visibility)</Text>
+        {hasConnections ? (
+          <Text style={styles.advertisingPaused}>
+            Paused — connected to {connectedDevices[0].endpointName}
+          </Text>
+        ) : (
+          <>
+            <View style={styles.advertisingToggleRow}>
+              <TouchableOpacity
+                style={[
+                  styles.toggleButton,
+                  syncInfo?.isAdvertising ? styles.toggleButtonActive : styles.toggleButtonInactive,
+                ]}
+                onPress={syncInfo?.isAdvertising ? handleStopAdvertising : handleStartAdvertising}
+              >
+                <Text
+                  style={[
+                    styles.toggleButtonText,
+                    syncInfo?.isAdvertising
+                      ? styles.toggleButtonTextActive
+                      : styles.toggleButtonTextInactive,
+                  ]}
+                >
+                  {syncInfo?.isAdvertising ? 'ON' : 'OFF'}
+                </Text>
+              </TouchableOpacity>
+            </View>
+            {deviceName ? (
+              <Text style={styles.deviceNameLabel}>My phone is: {deviceName}</Text>
+            ) : null}
+          </>
+        )}
+      </View>
+
+      {/* ── Discovery (Search) ── */}
+      {!hasConnections ? (
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>🔍 Search for Devices</Text>
+          <View style={styles.buttonRow}>
+            {isScanning ? (
+              <TouchableOpacity
+                style={[styles.button, styles.stopButton]}
+                onPress={handleStopDiscovery}
+              >
+                <Text style={styles.buttonText}>Stop Searching</Text>
+              </TouchableOpacity>
+            ) : (
+              <TouchableOpacity style={styles.button} onPress={handleStartDiscovery}>
+                <Text style={styles.buttonText}>Search for Devices</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+          {isScanning ? <ActivityIndicator style={styles.spinner} /> : null}
+        </View>
+      ) : null}
+
+      {/* ── Paired Devices (persisted) ── */}
+      {pairedDevices.length > 0 ? (
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>📱 Paired Devices</Text>
+          {pairedDevices.map((device) => {
+            const status = getPairedDeviceStatus(device);
+            return (
+              <View key={device.id} style={styles.pairedItem}>
+                <View style={styles.pairedInfo}>
+                  <View style={styles.pairedNameRow}>
+                    <View
+                      style={[
+                        styles.statusDot,
+                        status === 'connected'
+                          ? styles.dotConnected
+                          : status === 'nearby'
+                            ? styles.dotNearby
+                            : styles.dotOffline,
+                      ]}
+                    />
+                    <Text style={styles.pairedName}>{device.deviceName}</Text>
+                  </View>
+                  <Text style={styles.pairedStatus}>
+                    {status === 'connected'
+                      ? 'Connected'
+                      : status === 'nearby'
+                        ? 'Nearby — reconnecting…'
+                        : 'Offline'}
+                  </Text>
+                </View>
+                {status === 'connected' ? (
+                  <TouchableOpacity
+                    style={styles.disconnectButton}
+                    onPress={() => {
+                      const endpoint = connectedDevices.find(
+                        (c) => c.endpointName === device.deviceName,
+                      );
+                      if (endpoint) {
+                        handleDisconnect(endpoint.endpointId, endpoint.endpointName);
+                      }
+                    }}
+                  >
+                    <Text style={styles.disconnectButtonText}>Disconnect</Text>
+                  </TouchableOpacity>
+                ) : (
+                  <TouchableOpacity
+                    style={styles.removeButton}
+                    onPress={() => handleRemovePaired(device.id, device.deviceName)}
+                  >
+                    <Text style={styles.removeButtonText}>Remove</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            );
+          })}
+        </View>
+      ) : null}
+
+      {/* ── Sync controls (when connected) ── */}
       {hasConnections ? (
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>✅ Connected ({connectedDevices.length})</Text>
+            <Text style={styles.sectionTitle}>🔄 Sync</Text>
             {connectedDevices.length > 1 ? (
               <TouchableOpacity onPress={handleDisconnectAll}>
                 <Text style={styles.disconnectAllText}>Disconnect All</Text>
               </TouchableOpacity>
             ) : null}
           </View>
-          {connectedDevices.map((device) => (
-            <View key={device.endpointId} style={styles.connectedItem}>
-              <View style={styles.connectedInfo}>
-                <Text style={styles.connectedName}>{device.endpointName}</Text>
-                <Text style={styles.connectedId}>{device.endpointId}</Text>
-              </View>
-              <TouchableOpacity
-                style={styles.disconnectButton}
-                onPress={() => handleDisconnect(device.endpointId, device.endpointName)}
-              >
-                <Text style={styles.disconnectButtonText}>Disconnect</Text>
-              </TouchableOpacity>
-            </View>
-          ))}
 
           {/* Auto-sync toggle */}
           <TouchableOpacity
@@ -370,7 +597,7 @@ export default function DevicesScreen() {
             </View>
           ) : null}
 
-          {/* Sync button — only shows when connected */}
+          {/* Sync button */}
           <TouchableOpacity
             style={[styles.syncButton, isSyncing && styles.syncingButton]}
             onPress={handleSync}
@@ -404,25 +631,10 @@ export default function DevicesScreen() {
         </View>
       ) : null}
 
-      {/* ── Scan controls ── */}
-      <View style={styles.buttonRow}>
-        {isScanning ? (
-          <TouchableOpacity style={[styles.button, styles.stopButton]} onPress={handleStopScan}>
-            <Text style={styles.buttonText}>Stop Scanning</Text>
-          </TouchableOpacity>
-        ) : (
-          <TouchableOpacity style={styles.button} onPress={handleStartScan}>
-            <Text style={styles.buttonText}>Scan for Devices</Text>
-          </TouchableOpacity>
-        )}
-      </View>
-
-      {isScanning ? <ActivityIndicator style={styles.spinner} /> : null}
-
-      {/* ── Discovered devices ── */}
-      <Text style={styles.sectionTitle}>Nearby Devices ({discoveredDevices.length})</Text>
+      {/* ── Discovered devices (unpaired only) ── */}
+      <Text style={styles.sectionTitle}>Nearby Devices ({unpairedDiscovered.length})</Text>
       <FlatList
-        data={discoveredDevices}
+        data={unpairedDiscovered}
         keyExtractor={(item) => item.endpointId}
         renderItem={({ item }) => {
           const isThisConnecting = isConnecting === item.endpointId;
@@ -454,29 +666,44 @@ export default function DevicesScreen() {
         ListEmptyComponent={
           <Text style={styles.empty}>
             {isScanning
-              ? 'Scanning for nearby devices…'
-              : 'Tap "Scan for Devices" to find nearby XPW2 tablets.'}
+              ? 'Searching for nearby devices…'
+              : hasConnections
+                ? 'Connected — search paused.'
+                : 'Tap "Search for Devices" to find nearby XPW2 tablets.'}
           </Text>
         }
         ListFooterComponent={
-          <View style={styles.logPanel}>
-            <View style={styles.logHeader}>
-              <Text style={styles.logTitle}>📝 Debug Log</Text>
-              <TouchableOpacity onPress={() => setLogs([])}>
-                <Text style={styles.logClear}>Clear</Text>
-              </TouchableOpacity>
-            </View>
-            <View style={styles.logBody}>
-              {logs.length === 0 ? (
-                <Text style={styles.logEmpty}>No logs yet</Text>
-              ) : (
-                logs.map((line, i) => (
-                  <Text key={i} style={styles.logLine}>
-                    {line}
-                  </Text>
-                ))
-              )}
-            </View>
+          <View>
+            {/* Debug log toggle */}
+            <TouchableOpacity
+              style={styles.debugToggle}
+              onPress={() => setShowDebugLog((prev) => !prev)}
+            >
+              <Text style={styles.debugToggleText}>
+                {showDebugLog ? '▼ Hide Debug Log' : '▶ Show Debug Log'}
+              </Text>
+            </TouchableOpacity>
+            {showDebugLog ? (
+              <View style={styles.logPanel}>
+                <View style={styles.logHeader}>
+                  <Text style={styles.logTitle}>📝 Debug Log</Text>
+                  <TouchableOpacity onPress={() => setLogs([])}>
+                    <Text style={styles.logClear}>Clear</Text>
+                  </TouchableOpacity>
+                </View>
+                <View style={styles.logBody}>
+                  {logs.length === 0 ? (
+                    <Text style={styles.logEmpty}>No logs yet</Text>
+                  ) : (
+                    logs.map((line, i) => (
+                      <Text key={i} style={styles.logLine}>
+                        {line}
+                      </Text>
+                    ))
+                  )}
+                </View>
+              </View>
+            ) : null}
           </View>
         }
       />
@@ -511,6 +738,9 @@ const styles = StyleSheet.create({
   badgeInactive: {
     backgroundColor: '#e9ecef',
   },
+  badgeConnected: {
+    backgroundColor: '#d4edda',
+  },
   badgeText: {
     fontSize: 12,
     fontWeight: '600',
@@ -539,6 +769,10 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     padding: 14,
     marginBottom: 16,
+  },
+  sectionActive: {
+    borderWidth: 1,
+    borderColor: '#34c759',
   },
   sectionHeader: {
     flexDirection: 'row',
@@ -575,6 +809,57 @@ const styles = StyleSheet.create({
     fontSize: 11,
     marginTop: 2,
     fontFamily: 'monospace',
+  },
+  pairedItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 10,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: '#eee',
+  },
+  pairedInfo: {
+    flex: 1,
+  },
+  pairedNameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  pairedName: {
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  pairedStatus: {
+    color: '#999',
+    fontSize: 12,
+    marginTop: 2,
+    marginLeft: 20,
+  },
+  statusDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+  },
+  dotConnected: {
+    backgroundColor: '#34c759',
+  },
+  dotNearby: {
+    backgroundColor: '#f0ad4e',
+  },
+  dotOffline: {
+    backgroundColor: '#ccc',
+  },
+  removeButton: {
+    borderWidth: 1,
+    borderColor: '#999',
+    borderRadius: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+  },
+  removeButtonText: {
+    color: '#999',
+    fontSize: 12,
+    fontWeight: '600',
   },
   disconnectButton: {
     borderWidth: 1,
@@ -655,6 +940,46 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#333',
   },
+  advertisingToggleRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 4,
+  },
+  toggleButton: {
+    paddingHorizontal: 24,
+    paddingVertical: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+  toggleButtonActive: {
+    backgroundColor: '#34c759',
+    borderColor: '#34c759',
+  },
+  toggleButtonInactive: {
+    backgroundColor: '#f8f8f8',
+    borderColor: '#ccc',
+  },
+  toggleButtonText: {
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  toggleButtonTextActive: {
+    color: '#fff',
+  },
+  toggleButtonTextInactive: {
+    color: '#666',
+  },
+  advertisingPaused: {
+    color: '#999',
+    fontSize: 13,
+    fontStyle: 'italic',
+    marginTop: 4,
+  },
+  deviceNameLabel: {
+    color: '#666',
+    fontSize: 13,
+    marginTop: 8,
+  },
   buttonRow: {
     marginBottom: 12,
   },
@@ -715,6 +1040,16 @@ const styles = StyleSheet.create({
     color: '#999',
     marginTop: 16,
     lineHeight: 20,
+  },
+  debugToggle: {
+    paddingVertical: 10,
+    paddingHorizontal: 4,
+    marginTop: 8,
+  },
+  debugToggleText: {
+    color: '#888',
+    fontSize: 12,
+    fontWeight: '600',
   },
   logPanel: {
     marginTop: 12,

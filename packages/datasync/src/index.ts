@@ -168,7 +168,7 @@ export interface DeviceConnectionChangedPayload {
 export async function recordEvent(
   eventType: string,
   payload: Record<string, unknown>,
-  sessionId: string
+  sessionId: string,
 ): Promise<string> {
   return ExpoDataSync.recordEvent(eventType, JSON.stringify(payload), sessionId);
 }
@@ -177,13 +177,13 @@ export async function recordEventWithCorrelation(
   eventType: string,
   payload: Record<string, unknown>,
   sessionId: string,
-  correlationId: string
+  correlationId: string,
 ): Promise<string> {
   return ExpoDataSync.recordEventWithCorrelation(
     eventType,
     JSON.stringify(payload),
     sessionId,
-    correlationId
+    correlationId,
   );
 }
 
@@ -347,6 +347,14 @@ export async function getPairedDevices(): Promise<DeviceRecord[]> {
   return ExpoDataSync.getPairedDevices();
 }
 
+export async function removePairedDevice(deviceId: string): Promise<string> {
+  return ExpoDataSync.removePairedDevice(deviceId);
+}
+
+export async function unpairDevice(deviceId: string): Promise<string> {
+  return ExpoDataSync.unpairDevice(deviceId);
+}
+
 // ─── Device Info ────────────────────────────────────────────────────────
 
 export async function getDeviceId(): Promise<string> {
@@ -370,31 +378,31 @@ export async function stopOutboxProcessing(): Promise<string> {
 // ─── Event Subscriptions ────────────────────────────────────────────────
 
 export function addEventRecordedListener(
-  callback: (event: EventRecordedPayload) => void
+  callback: (event: EventRecordedPayload) => void,
 ): EventSubscription {
   return emitter.addListener('onEventRecorded', callback);
 }
 
 export function addSyncStatusChangedListener(
-  callback: (event: SyncStatusChangedPayload) => void
+  callback: (event: SyncStatusChangedPayload) => void,
 ): EventSubscription {
   return emitter.addListener('onSyncStatusChanged', callback);
 }
 
 export function addDeviceFoundListener(
-  callback: (event: DeviceFoundPayload) => void
+  callback: (event: DeviceFoundPayload) => void,
 ): EventSubscription {
   return emitter.addListener('onDeviceFound', callback);
 }
 
 export function addDeviceLostListener(
-  callback: (event: DeviceLostPayload) => void
+  callback: (event: DeviceLostPayload) => void,
 ): EventSubscription {
   return emitter.addListener('onDeviceLost', callback);
 }
 
 export function addDeviceConnectionChangedListener(
-  callback: (event: DeviceConnectionChangedPayload) => void
+  callback: (event: DeviceConnectionChangedPayload) => void,
 ): EventSubscription {
   return emitter.addListener('onDeviceConnectionChanged', callback);
 }
