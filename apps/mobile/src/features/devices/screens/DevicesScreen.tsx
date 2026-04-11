@@ -213,10 +213,14 @@ export default function DevicesScreen() {
           { cancelable: false },
         );
       } else {
-        // Phone A (initiator): passive — show the code so user can read it aloud to Phone B
+        // Phone A (initiator): Nearby requires BOTH sides to call acceptConnection().
+        // Accept immediately (we initiated the request) then show the verification code
+        // passively so the user can confirm it matches Phone B's display.
+        await DataSync.acceptConnection(event.endpointId);
+        addLog(`🔗 Accepted initiated connection to ${event.endpointName}`);
         Alert.alert(
           'Connecting…',
-          `Connecting to "${event.endpointName}"\n\nVerification code: ${event.authenticationDigits}\n\nConfirm this code appears on the other device.`,
+          `Connecting to "${event.endpointName}"\n\nVerification code: ${event.authenticationDigits}\n\nConfirm this code matches on the other device, then have them tap Accept.`,
           [{ text: 'OK' }],
         );
       }
