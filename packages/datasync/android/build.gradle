@@ -52,9 +52,6 @@ dependencies {
   // Android Keystore for key management
   implementation "androidx.security:security-crypto:1.1.0-alpha06"
 
-  // Google Nearby Connections
-  implementation "com.google.android.gms:play-services-nearby:19.3.0"
-
   // WorkManager
   def work_version = "2.10.0"
   implementation "androidx.work:work-runtime-ktx:$work_version"

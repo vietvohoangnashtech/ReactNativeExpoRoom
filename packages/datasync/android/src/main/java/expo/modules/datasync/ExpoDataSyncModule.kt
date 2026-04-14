@@ -8,7 +8,7 @@ import expo.modules.kotlin.functions.Coroutine
 import expo.modules.datasync.engine.BackendSyncManager
 import expo.modules.datasync.engine.DataSyncEngine
 import expo.modules.datasync.engine.EventOutbox
-import expo.modules.datasync.nearby.NearbyManager
+import expo.modules.datasync.wifidirect.WifiDirectManager
 import expo.modules.datasync.nearby.NearbyPayloadHandler
 import expo.modules.datasync.worker.SyncScheduler
 import kotlinx.coroutines.CoroutineScope
@@ -35,8 +35,8 @@ class ExpoDataSyncModule : Module() {
         DataSyncEngine(appContext.reactContext!!)
     }
 
-    private val nearbyManager: NearbyManager by lazy {
-        NearbyManager(appContext.reactContext!!).also { setupNearbyCallbacks(it) }
+    private val wifiDirectManager: WifiDirectManager by lazy {
+        WifiDirectManager(appContext.reactContext!!, getDeviceId()).also { setupP2pCallbacks(it) }
     }
 
     private val payloadHandler: NearbyPayloadHandler by lazy {
@@ -51,7 +51,7 @@ class ExpoDataSyncModule : Module() {
         EventOutbox(
             engine = engine,
             onDeviceSyncBatch = { entries ->
-                val connected = nearbyManager.connectedEndpoints.value
+                val connected = wifiDirectManager.connectedEndpoints.value
                 if (connected.isEmpty()) return@EventOutbox false
                 val deviceId = getDeviceId()
                 val batchData = payloadHandler.createOutgoingBatch(
@@ -60,7 +60,7 @@ class ExpoDataSyncModule : Module() {
                     entries = entries
                 )
                 for (endpoint in connected) {
-                    nearbyManager.sendPayload(endpoint.endpointId, batchData)
+                    wifiDirectManager.sendPayload(endpoint.endpointId, batchData)
                 }
                 true
             },
@@ -75,7 +75,7 @@ class ExpoDataSyncModule : Module() {
         return Settings.Secure.getString(ctx.contentResolver, Settings.Secure.ANDROID_ID) ?: "unknown"
     }
 
-    private fun setupNearbyCallbacks(manager: NearbyManager) {
+    private fun setupP2pCallbacks(manager: WifiDirectManager) {
         manager.onPayloadReceived = { endpointId, data ->
             scope.launch {
                 val accepted = payloadHandler.handleIncomingPayload(endpointId, data)
@@ -107,6 +107,7 @@ class ExpoDataSyncModule : Module() {
                         .find { it.endpointId == endpointId }
                     val name = endpoint?.endpointName ?: endpointId
                     val remoteDeviceId = endpoint?.remoteDeviceId
+                    // For Wi-Fi Direct, nearbyEndpointId stores the peer's Android ID
                     // Lookup order: remoteDeviceId (stable) → endpointId → name (fallback)
                     val existing = remoteDeviceId?.let { engine.getDevice(it) }
                         ?: engine.getDeviceByEndpoint(endpointId)
@@ -256,53 +257,53 @@ class ExpoDataSyncModule : Module() {
 
         AsyncFunction("startAdvertising") { deviceName: String ->
             val encodedName = "$deviceName|${getDeviceId()}"
-            nearbyManager.startAdvertising(encodedName)
+            wifiDirectManager.startAdvertising(encodedName)
             "ok"
         }
 
         AsyncFunction("stopAdvertising") {
-            nearbyManager.stopAdvertising()
+            wifiDirectManager.stopAdvertising()
             "ok"
         }
 
         AsyncFunction("startDiscovery") {
-            nearbyManager.startDiscovery()
+            wifiDirectManager.startDiscovery()
             "ok"
         }
 
         AsyncFunction("stopDiscovery") {
-            nearbyManager.stopDiscovery()
+            wifiDirectManager.stopDiscovery()
             "ok"
         }
 
         AsyncFunction("connectToDevice") { deviceName: String, endpointId: String ->
             val encodedName = "$deviceName|${getDeviceId()}"
-            nearbyManager.requestConnection(encodedName, endpointId)
+            wifiDirectManager.requestConnection(encodedName, endpointId)
             "ok"
         }
 
         AsyncFunction("acceptConnection") { endpointId: String ->
-            nearbyManager.acceptConnection(endpointId)
+            wifiDirectManager.acceptConnection(endpointId)
             "ok"
         }
 
         AsyncFunction("rejectConnection") { endpointId: String ->
-            nearbyManager.rejectConnection(endpointId)
+            wifiDirectManager.rejectConnection(endpointId)
             "ok"
         }
 
         AsyncFunction("disconnectDevice") { endpointId: String ->
-            nearbyManager.disconnect(endpointId)
+            wifiDirectManager.disconnect(endpointId)
             "ok"
         }
 
         AsyncFunction("disconnectAll") {
-            nearbyManager.disconnectAll()
+            wifiDirectManager.disconnectAll()
             "ok"
         }
 
         AsyncFunction("getDiscoveredDevices") {
-            nearbyManager.discoveredEndpoints.value.map { endpoint ->
+            wifiDirectManager.discoveredEndpoints.value.map { endpoint ->
                 mapOf(
                     "endpointId" to endpoint.endpointId,
                     "endpointName" to endpoint.endpointName,
@@ -313,7 +314,7 @@ class ExpoDataSyncModule : Module() {
         }
 
         AsyncFunction("getConnectedDevices") {
-            nearbyManager.connectedEndpoints.value.map { endpoint ->
+            wifiDirectManager.connectedEndpoints.value.map { endpoint ->
                 mapOf(
                     "endpointId" to endpoint.endpointId,
                     "endpointName" to endpoint.endpointName,
@@ -323,12 +324,12 @@ class ExpoDataSyncModule : Module() {
         }
 
         AsyncFunction("getDeviceSyncInfo") {
-            val connected = nearbyManager.connectedEndpoints.value.firstOrNull()
+            val connected = wifiDirectManager.connectedEndpoints.value.firstOrNull()
             mapOf(
                 "connectedDeviceId" to connected?.endpointId,
                 "connectedDeviceName" to connected?.endpointName,
-                "isAdvertising" to nearbyManager.isAdvertising.value,
-                "isDiscovering" to nearbyManager.isDiscovering.value
+                "isAdvertising" to wifiDirectManager.isAdvertising.value,
+                "isDiscovering" to wifiDirectManager.isDiscovering.value
             )
         }
 
@@ -417,7 +418,7 @@ class ExpoDataSyncModule : Module() {
         AsyncFunction("removePairedDevice") Coroutine { deviceId: String ->
             engine.getDevice(deviceId)?.let { device ->
                 if (device.connectionStatus == "connected" && device.nearbyEndpointId != null) {
-                    nearbyManager.disconnect(device.nearbyEndpointId!!)
+                    wifiDirectManager.disconnect(device.nearbyEndpointId!!)
                 }
             }
             engine.deleteDevice(deviceId)
@@ -465,7 +466,7 @@ class ExpoDataSyncModule : Module() {
 
         OnDestroy {
             eventOutbox.destroy()
-            nearbyManager.destroy()
+            wifiDirectManager.destroy()
         }
     }
 }

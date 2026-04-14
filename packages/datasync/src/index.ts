@@ -124,6 +124,7 @@ export interface DeviceSyncInfo {
 }
 
 export interface DiscoveredDevice {
+  /** Peer's Android device ID (stable across reconnections). */
   endpointId: string;
   endpointName: string;
   remoteDeviceId?: string;
@@ -131,6 +132,7 @@ export interface DiscoveredDevice {
 }
 
 export interface ConnectedDevice {
+  /** Peer's Android device ID (stable across reconnections). */
   endpointId: string;
   endpointName: string;
   remoteDeviceId?: string;
@@ -170,6 +172,7 @@ export interface ConnectionRequestPayload {
   endpointId: string;
   endpointName: string;
   remoteDeviceId?: string;
+  /** Always empty string — Wi-Fi Direct connections are auto-accepted. */
   authenticationDigits: string;
   /** true = responder/advertiser (show Accept/Reject), false = initiator (read-only code display) */
   isIncoming: boolean;

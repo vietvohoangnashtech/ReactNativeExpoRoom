@@ -5,7 +5,6 @@ import android.util.Log
 import androidx.work.*
 import expo.modules.datasync.engine.DataSyncEngine
 import expo.modules.datasync.engine.EventOutbox
-import expo.modules.datasync.nearby.NearbyManager
 import expo.modules.datasync.nearby.NearbyPayloadHandler
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -15,7 +14,7 @@ import java.util.UUID
  * WorkManager CoroutineWorker for device-to-device sync.
  *
  * Triggered as a one-shot work when a peer device is connected.
- * Sends pending events to connected peer tablet via Nearby Connections.
+ * Sends pending events to connected peer tablet via Wi-Fi Direct.
  */
 class DeviceSyncWorker(
     appContext: Context,
@@ -56,9 +55,8 @@ class DeviceSyncWorker(
                 entries = pending
             )
 
-            // NearbyManager is a singleton that should be accessed via the module
-            // This worker creates the payload — actual sending happens via NearbyManager
-            // Store the batch for the module to pick up and send
+            // WifiDirectManager is owned by ExpoDataSyncModule — this worker only prepares
+            // the payload. Actual sending is handled by EventOutbox via WifiDirectManager.
             Log.d(TAG, "Device sync prepared ${pending.size} events (${batchData.size} bytes)")
 
             Result.success(

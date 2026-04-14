@@ -1,123 +1,130 @@
 # 05 — Cross-Tablet Sync
 
-FitSync supports real-time event synchronization between tablets in the same room using **Google Nearby Connections** (P2P WiFi/Bluetooth, no internet required).
+FitSync supports real-time event synchronization between tablets in the same room using **Wi-Fi Direct** (Android `android.net.wifi.p2p` + DNS-SD service discovery, no internet or Google Play Services required).
 
 ---
 
 ## Overview
 
-```
-Tablet A (Pay role)          Tablet B (Weigh role)
-┌──────────────┐             ┌──────────────┐
-│  Advertising │◄───────────►│  Discovering │
-│  + Accepting │  P2P WiFi / │  + Requesting│
-│              │  BLE        │  connection  │
-└──────┬───────┘             └──────┬───────┘
-       │                            │
-       │  Connected (bidirectional) │
-       │                            │
-  Send Payload ──────────────► Receive + Deduplicate
-  (event batch JSON)             (insert to Room,
-                                  skip if idempotencyKey exists)
+```text
+Tablet A (Pay role)              Tablet B (Weigh role)
+┌────────────────────┐           ┌────────────────────┐
+│  DNS-SD Advertise  │           │  DNS-SD Discover   │
+│  _fitsync._tcp     │◄─────────►│  setDnsSdResponse  │
+│  TXT: name|androidId│  Wi-Fi   │  Listeners()       │
+└─────────┬──────────┘  Direct   └──────────┬─────────┘
+          │                                  │
+          │  WifiP2pManager.connect()         │
+          │  → group negotiation             │
+          │  → one becomes Group Owner (GO)  │
+          │                                  │
+    TCP ServerSocket             TCP Socket (connects to GO)
+    port 8988 (if GO)            port 8988
+          │                                  │
+          │  IDENT handshake (Android ID)    │
+          │◄────────────────────────────────►│
+          │                                  │
+     Send event batch JSON ──────────────► Receive + Deduplicate
+     (length-prefix framing)               (insert to Room,
+                                            skip if idempotencyKey exists)
 ```
 
 ---
 
-## Google Nearby Connections
+## Wi-Fi Direct + DNS-SD
 
-**API:** `com.google.android.gms:play-services-nearby:19.3.0`  
-**Strategy:** `Strategy.P2P_CLUSTER` — all devices can connect to each other (mesh-like)
+**API:** `android.net.wifi.p2p` (built-in, no Google Play Services)
+**Service type:** `_fitsync._tcp` (DNS-SD local service discovery)
+**Transport:** TCP on port `8988` with 4-byte length-prefix framing
 
 ### Advertising
 
-A tablet announces itself to nearby devices:
+A tablet registers a DNS-SD local service so nearby devices can discover it:
 
 ```kotlin
-// NearbyManager.kt
-fun startAdvertising(deviceName: String) {
-    val advertisingOptions = AdvertisingOptions.Builder()
-        .setStrategy(Strategy.P2P_CLUSTER)
-        .build()
-
-    Nearby.getConnectionsClient(context).startAdvertising(
-        deviceName,
-        SERVICE_ID,          // "com.fitsync.datasync"
-        connectionLifecycleCallback,
-        advertisingOptions
+// WifiDirectManager.kt
+fun startAdvertising(encodedName: String) {
+    registerReceiver()
+    val record = mapOf("name" to encodedName)   // TXT: "DisplayName|androidId"
+    val serviceInfo = WifiP2pDnsSdServiceInfo.newInstance(
+        "fitsync", "_fitsync._tcp", record
     )
+    wifiP2pManager.clearLocalServices(channel, ...)
+    wifiP2pManager.addLocalService(channel, serviceInfo, ...)
 }
 ```
 
 ### Discovery
 
 ```kotlin
+// WifiDirectManager.kt
 fun startDiscovery() {
-    val discoveryOptions = DiscoveryOptions.Builder()
-        .setStrategy(Strategy.P2P_CLUSTER)
-        .build()
-
-    Nearby.getConnectionsClient(context).startDiscovery(
-        SERVICE_ID,
-        endpointDiscoveryCallback,  // fires onEndpointFound / onEndpointLost
-        discoveryOptions
+    registerReceiver()
+    wifiP2pManager.setDnsSdResponseListeners(
+        channel,
+        { instanceName, _, srcDevice -> /* service found */ },
+        { _, txtRecordMap, srcDevice ->
+            val encodedName = txtRecordMap["name"] ?: return@setDnsSdResponseListeners
+            val (displayName, remoteDeviceId) = parseEncodedName(encodedName)
+            val endpointId = remoteDeviceId ?: srcDevice.deviceAddress
+            onEndpointDiscovered?.invoke(
+                DiscoveredEndpoint(endpointId, displayName, remoteDeviceId,
+                    SERVICE_TYPE, srcDevice.deviceAddress)
+            )
+        }
     )
+    wifiP2pManager.addServiceRequest(channel, WifiP2pDnsSdServiceRequest.newInstance(), ...)
+    wifiP2pManager.discoverServices(channel, ...)
 }
 ```
 
 ### Device Name Encoding
 
-Device names are encoded with the Android ID to enable stable device identity across reconnections:
+Device names are encoded with the Android ID (stable identifier, same as `DeviceEntity.id`):
 
 ```kotlin
-// Advertising (ExpoDataSyncModule.kt)
+// ExpoDataSyncModule.kt
 val encodedName = "$deviceName|${getDeviceId()}"
-nearbyManager.startAdvertising(encodedName)
+wifiDirectManager.startAdvertising(encodedName)
 
-// Parsed inside NearbyManager
-private fun parseNearbyName(raw: String): Pair<String, String?> {
-    val parts = raw.split("|")
-    return if (parts.size == 2) Pair(parts[0], parts[1]) else Pair(raw, null)
+// Parsed inside WifiDirectManager
+private fun parseEncodedName(encodedName: String): Pair<String, String?> {
+    val idx = encodedName.lastIndexOf('|')
+    return if (idx > 0) Pair(encodedName.substring(0, idx), encodedName.substring(idx + 1))
+    else Pair(encodedName, null)
 }
 ```
 
 ### Connection Lifecycle
 
-Connections require **manual accept/reject** — the module fires `onConnectionRequest` to JS which can show a confirmation UI before calling `acceptConnection` or `rejectConnection`:
+Connections are **auto-accepted** — no 4-digit code or user confirmation required.
+After `WifiP2pManager.connect()` the group forms, then a TCP + IDENT handshake
+establishes the data channel:
 
 ```kotlin
-private val connectionLifecycleCallback = object : ConnectionLifecycleCallback() {
-    override fun onConnectionInitiated(endpointId: String, info: ConnectionInfo) {
-        // Parse encoded name: "DisplayName|androidId"
-        val (displayName, remoteDeviceId) = parseNearbyName(info.endpointName)
-        pendingConnections[endpointId] = PendingConnection(
-            displayName, remoteDeviceId, info.authenticationDigits
-        )
-        // Notify JS — user must explicitly call acceptConnection() or rejectConnection()
-        onConnectionRequest?.invoke(
-            endpointId, displayName, remoteDeviceId,
-            info.authenticationDigits, !info.isIncomingConnection
-        )
-    }
+// WifiDirectManager.kt — BroadcastReceiver handles WIFI_P2P_CONNECTION_CHANGED_ACTION
+wifiP2pManager.requestConnectionInfo(channel) { info ->
+    if (info.isGroupOwner) transport.startServer()         // TCP ServerSocket :8988
+    else transport.connectToGroupOwner(goAddress)          // TCP client → GO's IP
+}
 
-    override fun onConnectionResult(endpointId: String, result: ConnectionResolution) {
-        pendingConnections.remove(endpointId)
-        if (result.status.isSuccess) {
-            // _connectedEndpoints updated, onConnectionChanged fires
-        }
-    }
+// WifiDirectTransport.kt — first frame on every new socket is the IDENT
+private fun sendIdent(socketKey: String) {
+    send(socketKey, "IDENT:$myAndroidId".toByteArray(Charsets.UTF_8))
+}
 
-    override fun onDisconnected(endpointId: String) {
-        _connectedEndpoints.update { it.filter { e -> e.endpointId != endpointId } }
-        onConnectionChanged?.invoke(endpointId, false)
-    }
+// WifiDirectManager.kt — onPeerIdentified fires after IDENT received
+transport.onPeerIdentified = { socketKey, peerId ->
+    onConnectionRequest?.invoke(peerId, displayName, peerId, "", true)  // authDigits = ""
+    onConnectionChanged?.invoke(peerId, true)
 }
 ```
 
-From JS:
+From JS (`authenticationDigits` is always `""`):
 
 ```typescript
-// Show digits UI, then:
-await DataSync.acceptConnection(endpointId); // or rejectConnection(endpointId)
+// acceptConnection() is a no-op — auto-accepted via IDENT handshake
+// rejectConnection() immediately disconnects the peer
 ```
 
 ---
@@ -126,65 +133,40 @@ await DataSync.acceptConnection(endpointId); // or rejectConnection(endpointId)
 
 ### Sending a Batch
 
-The `EventOutbox` collects pending events and sends them as a JSON batch:
+The `EventOutbox` collects pending events and sends them as a JSON batch.
+`WifiDirectTransport` uses **4-byte length-prefix framing** — no chunking needed:
 
 ```kotlin
-// NearbyPayloadHandler.kt
+// NearbyPayloadHandler.kt (unchanged — pure JSON serialization, no transport dependency)
 fun createOutgoingBatch(
     batchId: String,
     deviceId: String,
     entries: List<DataSyncEngine.OutboxEntry>
-): ByteArray {
-    val batch = EventBatch(
-        batchId = batchId,
-        deviceId = deviceId,
-        events = entries.map { entry ->
-            SerializableEvent(
-                eventId      = entry.event.eventId,
-                deviceId     = entry.event.deviceId,
-                sessionId    = entry.event.sessionId,
-                eventType    = entry.event.eventType,
-                occurredAt   = entry.event.occurredAt,
-                payload      = entry.event.payload,
-                idempotencyKey = entry.event.idempotencyKey,
-                correlationId  = entry.event.correlationId
-            )
-        }
-    )
-    return json.encodeToString(batch).toByteArray(Charsets.UTF_8)
-}
+): ByteArray { ... }
 
-// NearbyManager.kt
+// WifiDirectManager.kt
 fun sendPayload(endpointId: String, data: ByteArray) {
-    Nearby.getConnectionsClient(context)
-        .sendPayload(endpointId, Payload.fromBytes(data))
+    val socketKey = idToSocket[endpointId]
+    transport.send(socketKey, data)  // writes [4-byte-len][data] over TCP
 }
 ```
 
 ### Receiving a Batch
 
 ```kotlin
-private val payloadCallback = object : PayloadCallback() {
-    override fun onPayloadReceived(endpointId: String, payload: Payload) {
-        payload.asBytes()?.let { bytes ->
-            onPayloadReceived?.invoke(endpointId, bytes)
-        }
-    }
-}
+// WifiDirectTransport.kt — readLoop (Dispatchers.IO coroutine)
+val length = reader.readInt()          // 4-byte big-endian length
+val data = ByteArray(length)
+reader.readFully(data)
+onDataReceived?.invoke(socketKey, data)   // socketKey → peerId → onPayloadReceived
 
-// NearbyPayloadHandler.kt
+// NearbyPayloadHandler.kt (unchanged)
 suspend fun handleIncomingPayload(endpointId: String, data: ByteArray): Int {
     val batch = json.decodeFromString<EventBatch>(data.toString(Charsets.UTF_8))
     var accepted = 0
     for (event in batch.events) {
-        val entity = EventEntity(
-            eventId = event.eventId,  deviceId = event.deviceId,
-            sessionId = event.sessionId, eventType = event.eventType,
-            occurredAt = event.occurredAt, payload = event.payload,
-            idempotencyKey = event.idempotencyKey, correlationId = event.correlationId
-        )
         val isNew = engine.recordRemoteEvent(entity)
-        if (isNew) accepted++  // false means duplicate (idempotencyKey already seen)
+        if (isNew) accepted++  // false = duplicate (idempotencyKey already seen)
     }
     return accepted
 }
@@ -212,7 +194,7 @@ The native layer emits six events to React Native via the Expo Modules event sys
 ```typescript
 // packages/datasync/src/index.ts
 
-// New device discovered in Nearby
+// New peer discovered via DNS-SD
 export function addDeviceFoundListener(
   callback: (event: DeviceFoundPayload) => void,
 ): EventSubscription {
